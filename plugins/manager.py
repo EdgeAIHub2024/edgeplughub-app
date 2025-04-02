@@ -22,6 +22,17 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from packaging import version
+except ImportError:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "packaging"],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    from packaging import version
+
 from core.exceptions import PluginError, PluginLoadError, PluginDependencyError, PluginInstallError
 from core.utils import ensure_dir, compute_file_hash, extract_zip, create_unique_id
 
@@ -1069,11 +1080,17 @@ class PluginManager:
             bool: 是否为Python包依赖
         """
         # 检查是否为Python包格式：package_name>=1.0.0
-        if re.match(r'^[a-zA-Z0-9_\-]+([><=]=?[0-9\.]+)?$', dep_id):
+        if ';' in dep_id:  # 带条件的依赖，如 mediapipe>=0.8.9; python_version >= '3.7'
+            package_part = dep_id.split(';')[0].strip()
+            if re.match(r'^[a-zA-Z0-9_\-]+([><=]=?[0-9\.]+)?$', package_part):
+                return True
+        elif re.match(r'^[a-zA-Z0-9_\-]+([><=]=?[0-9\.]+)?$', dep_id):
             return True
+            
         # 避免将UUID格式的插件ID识别为Python包
         if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', dep_id):
             return False
+            
         return False
 
     def _check_python_package(self, dep_id):
@@ -1086,6 +1103,12 @@ class PluginManager:
             bool: 是否已安装
         """
         try:
+            # 处理带条件的依赖，例如 mediapipe>=0.8.9; python_version >= '3.7'
+            if ';' in dep_id:
+                package_part = dep_id.split(';')[0].strip()
+                # 条件验证逻辑复杂，这里简化处理，只考虑包名和版本
+                dep_id = package_part
+                
             # 解析包名和版本要求
             match = re.match(r'^([a-zA-Z0-9_\-]+)([><=]=?[0-9\.]+)?$', dep_id)
             if not match:
@@ -1095,8 +1118,12 @@ class PluginManager:
             version_req = match.group(2) or ''
             
             # 尝试导入包
-            module = importlib.import_module(package_name)
-            
+            try:
+                module = importlib.import_module(package_name)
+            except ImportError:
+                self.logger.info(f"Python包 {package_name} 未安装")
+                return False
+                
             # 如果没有版本要求，只要能导入就行
             if not version_req:
                 return True
@@ -1107,14 +1134,27 @@ class PluginManager:
                 return True  # 假设满足要求
                 
             installed_version = module.__version__
-            # 构建版本比较表达式
-            version_check = f"'{installed_version}'{version_req}"
             
-            # 使用eval执行版本比较（安全，因为我们已经验证了输入格式）
-            return eval(version_check)
-        except ImportError:
-            self.logger.info(f"Python包 {dep_id} 未安装")
-            return False
+            # 使用packaging库的版本比较功能，而不是eval
+            from packaging import version
+            
+            req_op = re.match(r'^([><=]=?)', version_req).group(1)
+            req_ver = version_req[len(req_op):]
+            
+            if req_op == '==':
+                return version.parse(installed_version) == version.parse(req_ver)
+            elif req_op == '>=':
+                return version.parse(installed_version) >= version.parse(req_ver)
+            elif req_op == '<=':
+                return version.parse(installed_version) <= version.parse(req_ver)
+            elif req_op == '>':
+                return version.parse(installed_version) > version.parse(req_ver)
+            elif req_op == '<':
+                return version.parse(installed_version) < version.parse(req_ver)
+            else:
+                self.logger.warning(f"不支持的版本比较操作符: {req_op}")
+                return True
+                
         except Exception as e:
             self.logger.error(f"检查Python包 {dep_id} 时出错: {str(e)}")
             return False
@@ -1129,6 +1169,12 @@ class PluginManager:
             bool: 是否安装成功
         """
         try:
+            # 处理带条件的依赖，例如 mediapipe>=0.8.9; python_version >= '3.7'
+            if ';' in dep_id:
+                package_part = dep_id.split(';')[0].strip()
+                # 条件验证逻辑复杂，这里简化处理，只安装包名和版本部分
+                dep_id = package_part
+                
             self.logger.info(f"正在安装Python包依赖: {dep_id}")
             
             # 使用子进程运行pip安装命令
@@ -1148,4 +1194,4 @@ class PluginManager:
                 
         except Exception as e:
             self.logger.error(f"安装Python包 {dep_id} 时发生错误: {str(e)}")
-            return False 
+            return False
