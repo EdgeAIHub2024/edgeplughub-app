@@ -4,7 +4,7 @@
 """
 EdgePlugHub入口点
 
-启动EdgePlugHub应用程序，支持GUI和CLI模式
+启动EdgePlugHub应用程序，支持GUI、CLI和插件管理器模式
 """
 
 import os
@@ -25,8 +25,9 @@ def main():
             # 如果代码执行到这里，表示应用已退出
             return 0
         else:
-            # 可能是显示版本信息或其他命令行操作后退出
-            return 0
+            # 启动失败
+            logging.error("应用程序启动失败")
+            return 1
     except KeyboardInterrupt:
         print("\n程序被用户中断")
         return 130  # 标准的SIGINT退出码

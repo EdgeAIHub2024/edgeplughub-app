@@ -33,10 +33,19 @@ class EdgePlugHubApp:
         self.args = self._parse_args(args)
         
         # 初始化路径
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        self.app_dir = self.args.app_dir or os.path.dirname(os.path.abspath(__file__))
+        
+        # 初始化配置文件路径
+        config_file = self.args.config_file
+        if not config_file and os.path.isdir(self.app_dir):
+            config_file = os.path.join(self.app_dir, "config.json")
         
         # 创建核心应用
-        self.core = AppCore("EdgePlugHub", self.app_dir)
+        self.core = AppCore("EdgePlugHub", self.app_dir, config_file)
+        
+        # 设置日志级别
+        if self.args.log_level:
+            logging.getLogger().setLevel(getattr(logging, self.args.log_level))
         
         # 记录基本信息
         self.logger = self.core.logger
@@ -61,13 +70,28 @@ class EdgePlugHubApp:
         """
         parser = argparse.ArgumentParser(description="EdgePlugHub - 插件管理平台")
         
-        # 添加命令行参数
-        parser.add_argument("--version", action="store_true", help="显示版本信息并退出")
-        parser.add_argument("--gui", action="store_true", help="启动图形用户界面")
-        parser.add_argument("--list-plugins", action="store_true", help="列出可用的插件")
-        parser.add_argument("--download-plugin", metavar="PLUGIN_ID", help="下载并安装插件")
-        parser.add_argument("--update-plugin", metavar="PLUGIN_ID", help="更新插件")
-        parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="设置日志级别")
+        # 运行模式
+        mode_group = parser.add_argument_group("运行模式")
+        mode_group.add_argument("--version", action="store_true", help="显示版本信息并退出")
+        mode_group.add_argument("--gui", action="store_true", help="启动图形用户界面")
+        mode_group.add_argument("--plugin-manager", action="store_true", help="仅启动插件管理器界面")
+        mode_group.add_argument("--list-plugins", action="store_true", help="列出可用的插件")
+        
+        # 插件操作
+        plugin_group = parser.add_argument_group("插件操作")
+        plugin_group.add_argument("--download-plugin", metavar="PLUGIN_ID", help="下载并安装插件")
+        plugin_group.add_argument("--update-plugin", metavar="PLUGIN_ID", help="更新插件")
+        plugin_group.add_argument("--remove-plugin", metavar="PLUGIN_ID", help="移除插件")
+        plugin_group.add_argument("--enable-plugin", metavar="PLUGIN_ID", help="启用插件")
+        plugin_group.add_argument("--disable-plugin", metavar="PLUGIN_ID", help="禁用插件")
+        
+        # 配置选项
+        config_group = parser.add_argument_group("配置选项")
+        config_group.add_argument("--log-level", default="INFO", 
+                                 choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], 
+                                 help="设置日志级别")
+        config_group.add_argument("--app-dir", type=str, help="指定应用程序数据目录")
+        config_group.add_argument("--config-file", type=str, help="指定配置文件路径")
         
         # 解析命令行参数
         return parser.parse_args(args)
@@ -171,30 +195,46 @@ class EdgePlugHubApp:
             # 处理版本显示
             if self.args.version:
                 self._show_version()
-                return False
+                return True
             
             # 处理插件列表
             if self.args.list_plugins:
                 self._list_plugins()
-                return False
+                return True
             
-            # 处理插件下载
+            # 处理插件操作
             if self.args.download_plugin:
                 self._download_plugin(self.args.download_plugin)
-                return False
+                return True
             
-            # 处理插件更新
             if self.args.update_plugin:
                 self._update_plugin(self.args.update_plugin)
-                return False
+                return True
+                
+            if self.args.remove_plugin:
+                self._remove_plugin(self.args.remove_plugin)
+                return True
+                
+            if self.args.enable_plugin:
+                self._enable_plugin(self.args.enable_plugin)
+                return True
+                
+            if self.args.disable_plugin:
+                self._disable_plugin(self.args.disable_plugin)
+                return True
             
             # 标记为运行中
             self.logger.info("EdgePlugHub应用程序已启动")
             
-            # 启动GUI或CLI模式
-            if self.args.gui:
+            # 选择运行模式
+            if self.args.plugin_manager:
+                # 仅启动插件管理器
+                self._start_plugin_manager()
+            elif self.args.gui:
+                # 启动完整GUI
                 self._start_gui()
             else:
+                # 默认启动CLI模式
                 self._start_cli()
             
             return True
@@ -299,6 +339,116 @@ class EdgePlugHubApp:
         self.stop()
         time.sleep(1)  # 等待资源释放
         return self.start()
+    
+    def _start_plugin_manager(self):
+        """启动插件管理器GUI"""
+        self.logger.info("正在启动插件管理器界面...")
+        
+        try:
+            # 导入UI模块
+            from ui.plugin_manager_ui import launch_plugin_manager_ui
+            from PyQt5.QtWidgets import QApplication
+            
+            # 创建Qt应用程序
+            qt_app = QApplication(sys.argv)
+            qt_app.setStyle("Fusion")
+            
+            # 启动插件管理器UI
+            ui = launch_plugin_manager_ui(self.core)
+            
+            # 启动Qt事件循环
+            sys.exit(qt_app.exec_())
+            
+        except ImportError as e:
+            self.logger.error(f"无法导入UI模块: {str(e)}", exc_info=True)
+            sys.exit(1)
+        except Exception as e:
+            self.logger.error(f"启动插件管理器界面失败: {str(e)}", exc_info=True)
+            sys.exit(1)
+            
+    def _remove_plugin(self, plugin_id):
+        """移除插件
+        
+        Args:
+            plugin_id: 插件ID
+        """
+        self.logger.info(f"正在移除插件: {plugin_id}")
+        
+        try:
+            # 确保插件管理器已初始化
+            if not hasattr(self.core, 'plugin_manager') or not self.core.plugin_manager:
+                self.logger.error("插件管理器未初始化")
+                return False
+                
+            # 执行卸载
+            result = self.core.plugin_manager.uninstall_plugin(plugin_id)
+            
+            if result:
+                self.logger.info(f"插件 {plugin_id} 已成功移除")
+            else:
+                self.logger.error(f"移除插件 {plugin_id} 失败")
+                
+            return result
+                
+        except Exception as e:
+            self.logger.error(f"移除插件 {plugin_id} 时出错: {str(e)}", exc_info=True)
+            return False
+            
+    def _enable_plugin(self, plugin_id):
+        """启用插件
+        
+        Args:
+            plugin_id: 插件ID
+        """
+        self.logger.info(f"正在启用插件: {plugin_id}")
+        
+        try:
+            # 确保插件管理器已初始化
+            if not hasattr(self.core, 'plugin_manager') or not self.core.plugin_manager:
+                self.logger.error("插件管理器未初始化")
+                return False
+                
+            # 执行启用
+            result = self.core.plugin_manager.enable_plugin(plugin_id)
+            
+            if result:
+                self.logger.info(f"插件 {plugin_id} 已成功启用")
+            else:
+                self.logger.error(f"启用插件 {plugin_id} 失败")
+                
+            return result
+                
+        except Exception as e:
+            self.logger.error(f"启用插件 {plugin_id} 时出错: {str(e)}", exc_info=True)
+            return False
+            
+    def _disable_plugin(self, plugin_id):
+        """禁用插件
+        
+        Args:
+            plugin_id: 插件ID
+        """
+        self.logger.info(f"正在禁用插件: {plugin_id}")
+        
+        try:
+            # 确保插件管理器已初始化
+            if not hasattr(self.core, 'plugin_manager') or not self.core.plugin_manager:
+                self.logger.error("插件管理器未初始化")
+                return False
+                
+            # 执行禁用
+            result = self.core.plugin_manager.disable_plugin(plugin_id)
+            
+            if result:
+                self.logger.info(f"插件 {plugin_id} 已成功禁用")
+            else:
+                self.logger.error(f"禁用插件 {plugin_id} 失败")
+                
+            return result
+                
+        except Exception as e:
+            self.logger.error(f"禁用插件 {plugin_id} 时出错: {str(e)}", exc_info=True)
+            return False
 
 # 用于直接运行的入口点
 def main():
