@@ -1,7 +1,7 @@
 {
   "app_name": "EdgePlugHub",
   "app_version": "1.0.0",
-  "plugins_directory": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/plugins",
+  "plugins_directory": "./plugins",
   "theme": "light",
   "language": "zh_CN",
   "check_updates": true,
@@ -9,8 +9,8 @@
   "first_run": true,
   "app.name": "EdgePlugHub",
   "app.version": "0.1.0",
-  "app.data_dir": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/data",
-  "app.logs_dir": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/logs",
-  "app.plugins_dir": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/plugins_data",
+  "app.data_dir": "./data",
+  "app.logs_dir": "./logs",
+  "app.plugins_dir": "./plugins_data",
   "threading.max_threads": 4
 }
