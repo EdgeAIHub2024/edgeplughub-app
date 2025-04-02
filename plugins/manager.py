@@ -17,6 +17,8 @@ import shutil
 import time
 import threading
 import zipfile
+import re
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -301,8 +303,20 @@ class PluginManager:
                 # 检查依赖项
                 dependencies = metadata.get('dependencies', [])
                 for dep_id in dependencies:
-                    # 检查依赖插件是否已加载
-                    if dep_id not in self.loaded_plugins:
+                    # 检查是否为Python包依赖
+                    if self._is_python_package_dependency(dep_id):
+                        # 验证Python包是否已安装
+                        if not self._check_python_package(dep_id):
+                            self.logger.warning(f"Python包依赖 {dep_id} 未安装，将尝试安装")
+                            if not self._install_python_package(dep_id):
+                                self.logger.error(f"无法安装Python包依赖: {dep_id}")
+                                raise PluginDependencyError(
+                                    f"无法满足Python包依赖: {dep_id}",
+                                    plugin_id=plugin_id,
+                                    dependency=dep_id
+                                )
+                    # 普通插件依赖
+                    elif dep_id not in self.loaded_plugins:
                         # 尝试加载依赖插件
                         if not self.load_plugin(dep_id):
                             raise PluginDependencyError(
@@ -537,6 +551,25 @@ class PluginManager:
             plugin_id = manifest['id']
             plugin_name = manifest['name']
             plugin_version = manifest['version']
+            
+            # 处理依赖项
+            dependencies = manifest.get('dependencies', [])
+            # 检查是否有Python包依赖
+            for dep in dependencies:
+                if self._is_python_package_dependency(dep):
+                    self.logger.info(f"检测到Python包依赖: {dep}")
+                    if not self._check_python_package(dep):
+                        self.logger.info(f"安装Python包依赖: {dep}")
+                        if not self._install_python_package(dep):
+                            error_msg = f"安装Python包依赖失败: {dep}"
+                            self.logger.error(error_msg)
+                            # 清理临时文件
+                            if is_temp and os.path.exists(temp_dir):
+                                shutil.rmtree(temp_dir)
+                            return {
+                                'success': False,
+                                'error': error_msg
+                            }
             
             # 检查插件是否已安装
             existing_plugin = self.repository.get_plugin(plugin_id)
@@ -1024,4 +1057,95 @@ class PluginManager:
                 'success': False,
                 'plugin_id': plugin_id,
                 'error': error_msg
-            } 
+            }
+
+    def _is_python_package_dependency(self, dep_id):
+        """检查是否为Python包依赖
+        
+        Args:
+            dep_id: 依赖ID
+            
+        Returns:
+            bool: 是否为Python包依赖
+        """
+        # 检查是否为Python包格式：package_name>=1.0.0
+        if re.match(r'^[a-zA-Z0-9_\-]+([><=]=?[0-9\.]+)?$', dep_id):
+            return True
+        # 避免将UUID格式的插件ID识别为Python包
+        if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', dep_id):
+            return False
+        return False
+
+    def _check_python_package(self, dep_id):
+        """检查Python包是否已安装
+        
+        Args:
+            dep_id: 依赖ID，可能包含版本要求，如 numpy>=1.19.0
+            
+        Returns:
+            bool: 是否已安装
+        """
+        try:
+            # 解析包名和版本要求
+            match = re.match(r'^([a-zA-Z0-9_\-]+)([><=]=?[0-9\.]+)?$', dep_id)
+            if not match:
+                return False
+                
+            package_name = match.group(1)
+            version_req = match.group(2) or ''
+            
+            # 尝试导入包
+            module = importlib.import_module(package_name)
+            
+            # 如果没有版本要求，只要能导入就行
+            if not version_req:
+                return True
+                
+            # 检查版本是否满足要求
+            if not hasattr(module, '__version__'):
+                self.logger.warning(f"无法确定{package_name}的版本")
+                return True  # 假设满足要求
+                
+            installed_version = module.__version__
+            # 构建版本比较表达式
+            version_check = f"'{installed_version}'{version_req}"
+            
+            # 使用eval执行版本比较（安全，因为我们已经验证了输入格式）
+            return eval(version_check)
+        except ImportError:
+            self.logger.info(f"Python包 {dep_id} 未安装")
+            return False
+        except Exception as e:
+            self.logger.error(f"检查Python包 {dep_id} 时出错: {str(e)}")
+            return False
+
+    def _install_python_package(self, dep_id):
+        """安装Python包依赖
+        
+        Args:
+            dep_id: 依赖ID
+            
+        Returns:
+            bool: 是否安装成功
+        """
+        try:
+            self.logger.info(f"正在安装Python包依赖: {dep_id}")
+            
+            # 使用子进程运行pip安装命令
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", dep_id],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Python包 {dep_id} 安装成功")
+                return True
+            else:
+                self.logger.error(f"安装Python包 {dep_id} 失败: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"安装Python包 {dep_id} 时发生错误: {str(e)}")
+            return False 
