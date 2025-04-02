@@ -1,0 +1,15 @@
+{
+  "app_name": "EdgePlugHub",
+  "app_version": "1.0.0",
+  "plugins_directory": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/tests/test_data/plugins",
+  "theme": "light",
+  "language": "zh_CN",
+  "check_updates": true,
+  "log_level": "INFO",
+  "first_run": true,
+  "app.name": "EdgePlugHubTest",
+  "app.version": "0.1.0",
+  "app.data_dir": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/tests/test_data/data",
+  "app.logs_dir": "/Users/chaishaoguo/Documents/EdgePlugHub/edgeplughub-app/tests/test_data/logs",
+  "threading.max_threads": 4
+}
