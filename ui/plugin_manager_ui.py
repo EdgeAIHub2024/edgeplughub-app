@@ -437,24 +437,24 @@ class PluginManagerUI(QMainWindow):
     download_complete = pyqtSignal(dict)
     update_complete = pyqtSignal(dict)
     
-    def __init__(self, app_core, parent=None):
+    def __init__(self, core, parent=None):
         """初始化插件管理器界面
         
         Args:
-            app_core: AppCore实例
+            core: AppCore实例
             parent: 父窗口
         """
         super().__init__(parent)
         
         # 保存应用核心引用
-        self.app_core = app_core
+        self.core = core
         
-        # 从app_core获取所需组件
-        self.config = app_core.config
-        self.event_system = app_core.event_system
-        self.repository = app_core.repository
-        self.plugin_manager = app_core.plugin_manager
-        self.thread_manager = app_core.thread_manager
+        # 从core获取所需组件
+        self.config = core.config
+        self.event_system = core.event_system
+        self.repository = core.repository
+        self.plugin_manager = core.plugin_manager
+        self.thread_manager = core.thread_manager
         
         # 日志记录器
         self.logger = logging.getLogger('ui.plugin_manager')
@@ -641,13 +641,50 @@ class PluginManagerUI(QMainWindow):
         # 添加所有分类选项
         self.category_combo.addItem("所有分类")
         
-        # 添加其他分类选项
-        categories = ["工具", "开发", "数据处理", "分析", "UI", "系统"]
-        for category in categories:
-            self.category_combo.addItem(category)
+        def get_categories():
+            try:
+                # 导入下载器
+                from plugins.downloader import PluginDownloader
+                
+                # 创建下载器实例
+                downloader = PluginDownloader(self.core.config, self.repository)
+                
+                # 从服务器获取可用插件列表
+                result = downloader.get_available_plugins()
+                
+                if not result.get('success', False):
+                    self.logger.error(f"获取插件分类失败: {result.get('error', '未知错误')}")
+                    return []
+                
+                # 提取所有插件的分类
+                categories = set()
+                for plugin in result.get('plugins', []):
+                    category = plugin.get('category')
+                    if category:
+                        categories.add(category)
+                
+                return sorted(list(categories))
+                
+            except Exception as e:
+                self.logger.error(f"获取插件分类时出错: {str(e)}")
+                return []
+        
+        def on_categories_loaded(categories):
+            # 添加从服务器获取的分类
+            for category in categories:
+                self.category_combo.addItem(category)
             
-        # 选择第一项（所有分类）
-        self.category_combo.setCurrentIndex(0)
+            # 如果没有获取到分类，添加默认分类
+            if not categories:
+                default_categories = ["工具", "开发", "数据处理", "分析", "UI", "系统"]
+                for category in default_categories:
+                    self.category_combo.addItem(category)
+            
+            # 选择第一项（所有分类）
+            self.category_combo.setCurrentIndex(0)
+        
+        # 在线程中获取分类
+        self.thread_manager.run_task(get_categories, on_result=on_categories_loaded)
     
     def _on_category_changed(self, index):
         """分类下拉框选择变更事件处理
@@ -672,29 +709,32 @@ class PluginManagerUI(QMainWindow):
         
         # 在线程中获取商店插件
         def get_store_plugins():
-            # 这里使用模拟数据，实际应用中应从服务器获取
-            # 使用本地仓库中的插件作为演示
-            plugins = self.repository.get_all_plugins(enabled_only=False)
-            
-            # 如果有分类过滤，应用过滤
-            if category:
-                plugins = [p for p in plugins if p.get('category', '') == category]
+            try:
+                # 导入下载器
+                from plugins.downloader import PluginDownloader
                 
-            # 添加模拟的插件商店数据
-            for i in range(3):
-                plugin_id = f"demo_plugin_{i}"
-                # 确保不重复
-                if not any(p['id'] == plugin_id for p in plugins):
-                    plugins.append({
-                        'id': plugin_id,
-                        'name': f"演示插件 {i+1}",
-                        'version': '1.0.0',
-                        'author': '开发者',
-                        'description': '这是一个演示插件，用于测试商店功能',
-                        'category': '工具' if i % 2 == 0 else '数据处理',
-                    })
-            
-            return plugins
+                # 创建下载器实例
+                downloader = PluginDownloader(self.core.config, self.repository)
+                
+                # 从服务器获取可用插件列表
+                result = downloader.get_available_plugins(category)
+                
+                if not result.get('success', False):
+                    self.logger.error(f"获取商店插件失败: {result.get('error', '未知错误')}")
+                    return []
+                
+                # 获取已安装的插件ID列表，用于过滤
+                installed_ids = [p['id'] for p in self.repository.get_all_plugins()]
+                
+                # 过滤掉已安装的插件
+                plugins = result.get('plugins', [])
+                available_plugins = [p for p in plugins if p.get('id') not in installed_ids]
+                
+                return available_plugins
+                
+            except Exception as e:
+                self.logger.error(f"获取商店插件时出错: {str(e)}")
+                return []
             
         def on_plugins_fetched(plugins):
             # 清空列表
@@ -1029,23 +1069,23 @@ class PluginManagerUI(QMainWindow):
         self.logger.info(f"插件 {plugin_id} 已卸载")
 
 
-def launch_plugin_manager_ui(app_core):
+def launch_plugin_manager_ui(core):
     """启动插件管理器界面
     
     Args:
-        app_core: AppCore实例
+        core: AppCore实例
         
     Returns:
         PluginManagerUI: 插件管理器界面实例
     """
     try:
         # 创建插件管理器界面
-        ui = PluginManagerUI(app_core)
+        ui = PluginManagerUI(core)
         ui.show()
         
         # 返回界面实例，以便调用者进一步操作
         return ui
         
     except Exception as e:
-        app_core.logger.error(f"启动插件管理器界面失败: {str(e)}", exc_info=True)
+        core.logger.error(f"启动插件管理器界面失败: {str(e)}", exc_info=True)
         raise 
