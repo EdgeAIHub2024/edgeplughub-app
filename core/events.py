@@ -27,9 +27,9 @@ class EventSystem(QObject):
         
         # 添加异步事件处理支持
         self._async_queue = queue.Queue()
+        self._running = True  # 修复：添加_running属性
         self._async_thread = threading.Thread(target=self._process_async_events, daemon=True)
         self._async_thread.start()
-        self._running = True
     
     def subscribe(self, event_type, callback, subscriber_id=None):
         """订阅事件

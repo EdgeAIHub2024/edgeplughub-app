@@ -353,7 +353,7 @@ class PluginManager:
                     plugin_module = importlib.reload(sys.modules[module_name])
                 else:
                     # 查找主模块文件
-                    main_module = metadata.get('main', 'plugin.py')
+                    main_module = metadata.get('main', 'gui_test.py')
                     main_module_path = os.path.join(plugin_path, main_module)
                     
                     if not os.path.exists(main_module_path):
@@ -373,25 +373,136 @@ class PluginManager:
                 
                 # 查找并实例化插件类
                 plugin_class = None
+                run_function = None
+                
+                # 首先尝试查找Plugin类（标准方式）
                 for name, obj in inspect.getmembers(plugin_module):
-                    # 查找名为Plugin的类
                     if inspect.isclass(obj) and name == "Plugin":
                         plugin_class = obj
                         break
                 
+                # 如果找不到Plugin类，尝试查找run_non_interactive函数（FitVerse风格）
                 if not plugin_class:
+                    for name, obj in inspect.getmembers(plugin_module):
+                        if inspect.isfunction(obj) and name == "run_non_interactive":
+                            run_function = obj
+                            self.logger.info(f"在插件 {plugin_id} 中找到run_non_interactive函数")
+                            break
+                
+                # 如果既没有Plugin类也没有run_non_interactive函数
+                if not plugin_class and not run_function:
                     raise PluginLoadError(
-                        f"插件 {plugin_id} 中找不到Plugin类",
+                        f"插件 {plugin_id} 中找不到Plugin类或run_non_interactive函数",
                         plugin_id=plugin_id
                     )
                 
                 # 创建插件实例
-                plugin_instance = plugin_class(
-                    self.config,
-                    self.event_system,
-                    self.repository,
-                    plugin_id
-                )
+                if plugin_class:
+                    # 标准方式：直接实例化Plugin类
+                    plugin_instance = plugin_class(
+                        self.config,
+                        self.event_system,
+                        self.repository,
+                        plugin_id
+                    )
+                else:
+                    # FitVerse风格：创建适配器包装run_non_interactive函数
+                    # 创建一个适配器类，包装run_non_interactive函数
+                    class FitVersePluginAdapter:
+                        def __init__(self, config, event_system, repository, plugin_id, run_func):
+                            self.config = config
+                            self.event_system = event_system
+                            self.repository = repository
+                            self.plugin_id = plugin_id
+                            self.run_func = run_func
+                            self.logger = logging.getLogger(f"plugins.adapter.{plugin_id}")
+                            self._status = "initialized"
+                            self._error = None
+                            
+                            # 设置元数据
+                            self.name = plugin_data.get('name', plugin_id)
+                            self.version = plugin_data.get('version', '1.0.0')
+                            self.description = plugin_data.get('description', '')
+                            self.category = plugin_data.get('category', '')
+                            self.author = plugin_data.get('author', 'Unknown')
+                        
+                        def initialize(self):
+                            self.logger.info(f"初始化FitVerse插件适配器: {self.plugin_id}")
+                            self._status = "initialized"
+                            return True
+                        
+                        def start(self):
+                            self.logger.info(f"启动FitVerse插件适配器: {self.plugin_id}")
+                            self._status = "running"
+                            return True
+                        
+                        def stop(self):
+                            self.logger.info(f"停止FitVerse插件适配器: {self.plugin_id}")
+                            self._status = "stopped"
+                            return True
+                        
+                        def cleanup(self):
+                            self.logger.info(f"清理FitVerse插件适配器: {self.plugin_id}")
+                            return True
+                        
+                        def process(self, input_data):
+                            self.logger.info(f"处理FitVerse插件请求: {self.plugin_id}")
+                            # 调用原始的run_non_interactive函数
+                            try:
+                                result = self.run_func()
+                                self.logger.info(f"FitVerse插件处理结果: {result}")
+                                return result
+                            except Exception as e:
+                                self.logger.error(f"FitVerse插件处理出错: {e}")
+                                self._status = "error"
+                                self._error = str(e)
+                                return {"success": False, "error": str(e)}
+                        
+                        # 兼容EdgePlugHub插件接口的方法
+                        def get_status(self):
+                            """获取插件状态"""
+                            return self._status
+                            
+                        def set_status(self, status, error=None):
+                            """设置插件状态"""
+                            self._status = status
+                            if error:
+                                self._error = error
+                            return True
+                            
+                        def get_error(self):
+                            """获取错误信息"""
+                            return self._error
+                            
+                        def get_manifest(self):
+                            """获取插件清单信息"""
+                            return {
+                                'id': self.plugin_id,
+                                'name': self.name,
+                                'version': self.version,
+                                'description': self.description,
+                                'category': self.category,
+                                'author': self.author
+                            }
+                            
+                        def get_info(self):
+                            """获取插件完整信息"""
+                            info = self.get_manifest()
+                            info.update({
+                                'status': self._status,
+                                'error': self._error
+                            })
+                            return info
+                    
+                    # 使用适配器
+                    plugin_instance = FitVersePluginAdapter(
+                        self.config,
+                        self.event_system,
+                        self.repository,
+                        plugin_id,
+                        run_function
+                    )
+                    self.logger.info(f"已创建FitVerse插件适配器: {plugin_id}")
                 
                 # 存储插件实例
                 self.loaded_plugins[plugin_id] = plugin_instance

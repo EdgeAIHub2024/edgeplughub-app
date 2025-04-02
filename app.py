@@ -20,6 +20,9 @@ from core.app_core import AppCore
 from core.utils import get_platform_info
 from core.exceptions import EdgePlugHubException, ConfigError, PluginError
 
+# 导入插件运行器
+from plugins.runner import PluginRunner
+
 class EdgePlugHubApp:
     """EdgePlugHub应用程序主类"""
     
@@ -98,9 +101,17 @@ class EdgePlugHubApp:
     
     def _init_modules(self):
         """初始化模块"""
-        # 这里将在后续阶段添加具体的初始化代码
-        # 包括插件管理器、数据仓库等组件的创建
-        pass
+        # 确保核心已经启动并初始化了plugin_manager
+        if not hasattr(self.core, 'plugin_manager') or self.core.plugin_manager is None:
+            self.core.start()
+            
+        # 获取核心组件的引用
+        self.plugin_manager = self.core.plugin_manager
+        self.repository = self.core.repository
+        
+        # 初始化插件运行器
+        self.plugin_runner = PluginRunner(self.plugin_manager, self.event_system, self.repository)
+        self.logger.info("插件运行器初始化完成")
     
     def _register_event_handlers(self):
         """注册事件处理器"""
