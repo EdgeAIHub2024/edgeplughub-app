@@ -254,17 +254,117 @@ class EdgePlugHubApp:
     
     def _list_plugins(self):
         """列出可用插件"""
-        # 这将在后续阶段实现
-        print("插件列表功能尚未实现")
+        try:
+            self.logger.info("列出可用插件")
+            
+            # 确保插件管理器已初始化
+            if not hasattr(self.core, 'plugin_manager') or not self.core.plugin_manager:
+                self.logger.error("插件管理器未初始化")
+                print("错误: 插件管理器未初始化")
+                return False
+            
+            # 获取已安装的插件
+            installed_plugins = self.core.repository.get_all_plugins()
+            
+            if installed_plugins:
+                print("\n已安装的插件:")
+                print("-" * 60)
+                print(f"{'ID':<20} {'名称':<20} {'版本':<10} {'状态':<10}")
+                print("-" * 60)
+                
+                for plugin in installed_plugins:
+                    plugin_id = plugin.get('id')
+                    name = plugin.get('name', plugin_id)
+                    version = plugin.get('version', 'unknown')
+                    enabled = "启用" if plugin.get('enabled', False) else "禁用"
+                    
+                    print(f"{plugin_id:<20} {name:<20} {version:<10} {enabled:<10}")
+            else:
+                print("\n没有安装任何插件")
+            
+            # 尝试获取可用的插件列表
+            try:
+                from plugins.downloader import PluginDownloader
+                downloader = PluginDownloader(self.core.config, self.core.repository)
+                
+                # 获取可用插件列表
+                available_plugins = downloader.get_available_plugins()
+                
+                if available_plugins.get('success', False) and available_plugins.get('plugins', []):
+                    print("\n可用于下载的插件:")
+                    print("-" * 60)
+                    print(f"{'ID':<20} {'名称':<20} {'版本':<10} {'类别':<10}")
+                    print("-" * 60)
+                    
+                    for plugin in available_plugins.get('plugins', []):
+                        plugin_id = plugin.get('id')
+                        name = plugin.get('name', plugin_id)
+                        version = plugin.get('version', 'unknown')
+                        category = plugin.get('category', 'unknown')
+                        
+                        # 检查是否已安装
+                        installed = any(p.get('id') == plugin_id for p in installed_plugins)
+                        if not installed:
+                            print(f"{plugin_id:<20} {name:<20} {version:<10} {category:<10}")
+                else:
+                    print("\n无法获取可用插件列表")
+                    if not available_plugins.get('success', False):
+                        print(f"错误: {available_plugins.get('error', '未知错误')}")
+                
+            except ImportError as e:
+                self.logger.error(f"无法导入下载器模块: {str(e)}")
+                print("\n无法获取可下载的插件列表")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"列出插件时出错: {str(e)}", exc_info=True)
+            print(f"错误: {str(e)}")
+            return False
     
     def _download_plugin(self, plugin_id):
         """下载并安装插件
         
         Args:
             plugin_id: 插件ID
+            
+        Returns:
+            bool: 是否成功下载安装
         """
-        # 这将在后续阶段实现
-        print(f"下载插件功能尚未实现: {plugin_id}")
+        self.logger.info(f"开始下载插件: {plugin_id}")
+        
+        try:
+            # 确保插件管理器已初始化
+            if not hasattr(self.core, 'plugin_manager') or not self.core.plugin_manager:
+                self.logger.error("插件管理器未初始化")
+                return False
+            
+            # 获取插件下载器
+            try:
+                from plugins.downloader import PluginDownloader
+                downloader = PluginDownloader(self.core.config, self.core.repository)
+            except ImportError as e:
+                self.logger.error(f"无法导入下载器模块: {str(e)}")
+                return False
+            
+            # 执行下载和安装
+            result = downloader.download_and_install(plugin_id, self.core.plugin_manager)
+            
+            if result.get('success', False):
+                plugin_path = result.get('file_path', '')
+                plugin_version = result.get('version', 'unknown')
+                plugin_name = result.get('name', plugin_id)
+                
+                self.logger.info(f"插件 {plugin_name} v{plugin_version} 下载并安装成功")
+                return True
+            else:
+                error = result.get('error', '未知错误')
+                self.logger.error(f"下载插件失败: {error}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"下载插件 {plugin_id} 时出错: {str(e)}", exc_info=True)
+            return False
     
     def _update_plugin(self, plugin_id):
         """更新插件

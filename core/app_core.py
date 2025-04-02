@@ -110,6 +110,10 @@ class AppCore:
             # 注册基本事件处理
             self.event_system.subscribe("app.exit", self._on_app_exit)
             
+            # 注册插件事件处理
+            self.event_system.subscribe("plugin.download_request", self._on_plugin_download_request)
+            self.event_system.subscribe("plugin.update_request", self._on_plugin_update_request)
+            
             # 标记为运行状态
             self.running = True
             self.exit_event.clear()
@@ -206,6 +210,119 @@ class AppCore:
         exit_code = data.get("exit_code", 0) if isinstance(data, dict) else 0
         self.logger.info(f"收到退出请求，退出码: {exit_code}")
         self.stop()
+    
+    def _on_plugin_download_request(self, data):
+        """插件下载请求事件处理
+        
+        Args:
+            data: 事件数据，包含plugin_id和callback
+        """
+        plugin_id = data.get('plugin_id')
+        callback = data.get('callback')
+        
+        self.logger.info(f"收到插件下载请求: {plugin_id}")
+        
+        # 在线程中执行下载
+        def download_task():
+            try:
+                # 导入下载器
+                from plugins.downloader import PluginDownloader
+                
+                # 创建下载器
+                downloader = PluginDownloader(self.config, self.repository)
+                
+                # 执行下载和安装
+                result = downloader.download_and_install(plugin_id, self.plugin_manager)
+                
+                # 发布安装事件
+                if result.get('success', False):
+                    self.event_system.publish('plugin.installed', {
+                        'plugin_id': plugin_id,
+                        'name': result.get('name', plugin_id),
+                        'version': result.get('version', 'unknown')
+                    }, main_thread=True)
+                
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.logger.error(f"下载插件失败: {error_msg}")
+                return {
+                    'success': False,
+                    'plugin_id': plugin_id,
+                    'error': error_msg
+                }
+        
+        # 在线程中执行，完成后回调
+        self.thread_manager.run_task(
+            download_task,
+            on_result=callback
+        )
+    
+    def _on_plugin_update_request(self, data):
+        """插件更新请求事件处理
+        
+        Args:
+            data: 事件数据，包含plugin_id和callback
+        """
+        plugin_id = data.get('plugin_id')
+        callback = data.get('callback')
+        
+        self.logger.info(f"收到插件更新请求: {plugin_id}")
+        
+        # 在线程中执行更新
+        def update_task():
+            try:
+                # 获取当前版本
+                plugin_info = self.repository.get_plugin(plugin_id)
+                if not plugin_info:
+                    return {
+                        'success': False,
+                        'plugin_id': plugin_id,
+                        'error': f"插件 {plugin_id} 未安装"
+                    }
+                
+                old_version = plugin_info.get('version', '0.0.0')
+                
+                # 导入下载器
+                from plugins.downloader import PluginDownloader
+                
+                # 创建下载器
+                downloader = PluginDownloader(self.config, self.repository)
+                
+                # 执行更新
+                result = downloader.download_and_install(plugin_id, self.plugin_manager)
+                
+                # 发布更新事件
+                if result.get('success', False):
+                    new_version = result.get('version', '0.0.0')
+                    self.event_system.publish('plugin.updated', {
+                        'plugin_id': plugin_id,
+                        'name': result.get('name', plugin_id),
+                        'old_version': old_version,
+                        'new_version': new_version
+                    }, main_thread=True)
+                
+                    # 添加版本信息到结果
+                    result['old_version'] = old_version
+                    result['new_version'] = new_version
+                
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.logger.error(f"更新插件失败: {error_msg}")
+                return {
+                    'success': False,
+                    'plugin_id': plugin_id,
+                    'error': error_msg
+                }
+        
+        # 在线程中执行，完成后回调
+        self.thread_manager.run_task(
+            update_task,
+            on_result=callback
+        )
     
     def run_in_thread(self, task, *args, 
                     on_result=None, on_error=None, on_finished=None, 
